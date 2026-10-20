@@ -710,3 +710,225 @@ describe('mdg:method with AsyncSimpleSchema', () => {
     assert.equal(runs, 0);
   });
 });
+
+import { DDP } from 'meteor/ddp-client';
+
+// Exercise promise/thenable contracts independently of a particular schema library.
+describe('ValidatedMethod async validation contracts', () => {
+  function fixture(validate, run) {
+    return new ValidatedMethod({
+      name: 'asyncValidationContract',
+      connection: { methods() {} },
+      validate,
+      run,
+    });
+  }
+
+  async function rejectsWith(invoke, expected) {
+    let caught;
+    try {
+      await invoke();
+    } catch (error) {
+      caught = error;
+    }
+    assert.strictEqual(caught, expected);
+  }
+
+  it('does not run until pending validation resolves', async () => {
+    let finishValidation;
+    const validation = new Promise(resolve => { finishValidation = resolve; });
+    const args = { value: 42 };
+    const context = { userId: 'user' };
+    const result = {};
+    let runs = 0;
+    const method = fixture(() => validation, function (received) {
+      runs++;
+      assert.strictEqual(this, context);
+      assert.strictEqual(received, args);
+      return result;
+    });
+    const execution = method._execute(context, args);
+    assert.equal(runs, 0);
+    finishValidation();
+    assert.strictEqual(await execution, result);
+    assert.equal(runs, 1);
+  });
+
+  it('preserves a delayed validation rejection without running', async () => {
+    let rejectValidation;
+    const validation = new Promise((resolve, reject) => { rejectValidation = reject; });
+    const error = new Error('delayed validation');
+    let runs = 0;
+    const method = fixture(() => validation, () => { runs++; });
+    const execution = method._execute({}, {});
+    const assertion = rejectsWith(() => execution, error);
+    rejectValidation(error);
+    await assertion;
+    assert.equal(runs, 0);
+  });
+
+  for (const [label, value] of [['false', false], ['null', null], ['zero', 0], ['object', {}]]) {
+    it('rejects async validation resolving to ' + label + ' without running', async () => {
+      let runs = 0;
+      const method = fixture(async () => value, () => { runs++; });
+      let caught;
+      try {
+        await method._execute({}, {});
+      } catch (error) {
+        caught = error;
+      }
+      assert.instanceOf(caught, Error);
+      assert.match(caught.message, /Returning from validate/);
+      assert.equal(runs, 0);
+    });
+  }
+
+  it('awaits a custom validation thenable with no catch method', async () => {
+    const calls = [];
+    const validation = {
+      then(resolve) {
+        assert.strictEqual(this, validation);
+        calls.push('validate');
+        resolve();
+      },
+    };
+    const result = {};
+    const method = fixture(() => validation, () => {
+      calls.push('run');
+      return result;
+    });
+    assert.strictEqual(await method._execute({}, {}), result);
+    assert.deepEqual(calls, ['validate', 'run']);
+  });
+
+  it('preserves rejection from a custom validation thenable', async () => {
+    const error = new Error('thenable validation');
+    let runs = 0;
+    const method = fixture(() => ({ then(resolve, reject) { reject(error); } }),
+      () => { runs++; });
+    await rejectsWith(() => method._execute({}, {}), error);
+    assert.equal(runs, 0);
+  });
+
+  it('rejects a validation result whose then property is not callable', () => {
+    let runs = 0;
+    const method = fixture(() => ({ then: true }), () => { runs++; });
+    assert.throws(() => method._execute({}, {}), /Returning from validate/);
+    assert.equal(runs, 0);
+  });
+
+  it('preserves an async run rejection after successful async validation', async () => {
+    const error = new Error('async run');
+    const method = fixture(async () => {}, async () => { throw error; });
+    await rejectsWith(() => method._execute({}, {}), error);
+  });
+});
+
+if (Meteor.isClient) {
+  describe('ValidatedMethod client callAsync contracts', () => {
+    let previousInvocation;
+    let previousRunning;
+
+    beforeEach(() => {
+      previousInvocation = DDP._CurrentMethodInvocation.get();
+      previousRunning = DDP._CurrentMethodInvocation._isCallAsyncMethodRunning();
+    });
+
+    afterEach(() => {
+      DDP._CurrentMethodInvocation._set(previousInvocation);
+      DDP._CurrentMethodInvocation._setCallAsyncMethodRunning(previousRunning);
+    });
+
+    function fixture(applyAsync) {
+      const connection = { methods() {}, applyAsync };
+      return new ValidatedMethod({
+        name: 'clientCallAsyncContract',
+        connection,
+        validate: null,
+        applyOptions: { wait: true, throwStubExceptions: false },
+        run() {},
+      });
+    }
+
+    for (const [label, transportResult] of [
+      ['undefined', undefined],
+      ['plain object', {}],
+      ['non-callable then', { then: true }],
+      ['resolved promise', Promise.resolve('stub result')],
+    ]) {
+      it('uses the callback result when applyAsync returns ' + label, async () => {
+        const args = { value: 1 };
+        const serverResult = {};
+        let callback;
+        let captured;
+        let receiver;
+        const method = fixture(function (...received) {
+          receiver = this;
+          captured = received;
+          callback = received[3];
+          return transportResult;
+        });
+        const execution = method.callAsync(args);
+        assert.strictEqual(receiver, method.connection);
+        assert.equal(captured[0], method.name);
+        assert.strictEqual(captured[1][0], args);
+        assert.strictEqual(captured[2], method.applyOptions);
+        assert.deepEqual(captured[2], {
+          returnStubValue: true,
+          throwStubExceptions: true,
+          wait: true,
+          isFromCallAsync: true,
+        });
+        assert.isUndefined(DDP._CurrentMethodInvocation.get());
+        assert.isTrue(DDP._CurrentMethodInvocation._isCallAsyncMethodRunning());
+        callback(null, serverResult);
+        assert.strictEqual(await execution, serverResult);
+        assert.isFalse(DDP._CurrentMethodInvocation._isCallAsyncMethodRunning());
+      });
+    }
+
+    it('preserves callback errors and clears the callAsync flag', async () => {
+      const error = new Meteor.Error('client-callback-error');
+      const method = fixture((name, args, options, callback) => {
+        callback(error);
+      });
+      await method.callAsync({}).then(
+        () => assert.fail('Expected rejection'),
+        caught => assert.strictEqual(caught, error)
+      );
+      assert.isFalse(DDP._CurrentMethodInvocation._isCallAsyncMethodRunning());
+    });
+
+    it('preserves a rejected stub promise before the server callback', async () => {
+      const error = new Error('client stub');
+      let callback;
+      const method = fixture((name, args, options, received) => {
+        callback = received;
+        return Promise.reject(error);
+      });
+      const execution = method.callAsync({});
+      try {
+        await execution.then(
+          () => assert.fail('Expected rejection'),
+          caught => assert.strictEqual(caught, error)
+        );
+      } finally {
+        // Complete the simulated transport even when an assertion fails.
+        callback(null, 'later server result');
+      }
+      await execution.then(
+        () => assert.fail('A late callback must not replace the rejection'),
+        caught => assert.strictEqual(caught, error)
+      );
+    });
+
+    it('rejects when applyAsync throws synchronously', async () => {
+      const error = new Error('client transport');
+      const method = fixture(() => { throw error; });
+      await method.callAsync({}).then(
+        () => assert.fail('Expected rejection'),
+        caught => assert.strictEqual(caught, error)
+      );
+    });
+  });
+}

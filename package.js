@@ -24,7 +24,7 @@ Package.onTest(function (api) {
   api.use([
     'ecmascript',
     'meteortesting:mocha@3.0.0',
-    //'aldeed:simple-schema@3.0.0', // modern support
+    'aldeed:simple-schema@3.0.0', // modern support
     'mdg:validated-method',
     'random'
   ]);

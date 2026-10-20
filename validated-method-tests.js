@@ -1,6 +1,7 @@
 import { Meteor } from 'meteor/meteor';
 import { ValidatedMethod } from 'meteor/mdg:validated-method';
 import SimpleSchema from 'simpl-schema';
+import AsyncSimpleSchema from 'meteor/aldeed:simple-schema';
 import { assert } from 'chai';
 
 const plainMethod = new ValidatedMethod({
@@ -88,6 +89,17 @@ const asyncMethod = new ValidatedMethod({
 		});
   }
 });
+
+const assertThrows = async ({ fn, message }) => {
+  try {
+    await fn();
+    assert.fail('Should have thrown');
+  } catch (e) {
+    if (message) {
+      assert.match(e.message, new RegExp(message));
+    }
+  }
+}
 
 function schemaMixin(methodOptions) {
   methodOptions.validate = methodOptions.schema.validator();
@@ -342,13 +354,16 @@ if (Meteor.isServer) {
 
     for (const [label, value] of [
       ['false', false], ['null', null], ['zero', 0], ['object', {}],
-      ['promise', Promise.resolve()],
+      ['promise', Promise.resolve('fail')],
     ]) {
-      it('rejects a validator returning ' + label + ' before running', () => {
+      it('rejects a validator returning ' + label + ' before running', async () => {
         let runs = 0;
         const f = fixture({ validate() { return value; }, run() { runs++; } });
         const method = new ValidatedMethod(f.options);
-        assert.throws(() => method._execute({}, {}), /Returning from validate/);
+        await assertThrows({
+          fn: () => method._execute({}, {}),
+          message: /Returning from validate/
+        })
         assert.equal(runs, 0);
       });
     }
@@ -487,3 +502,211 @@ if (Meteor.isServer) {
     });
   });
 }
+
+
+// Keep the synchronous-schema suite above intact while specifying the async contract.
+describe('mdg:method with AsyncSimpleSchema', () => {
+  const plainMethod = new ValidatedMethod({
+    name: 'asyncSchema.plainMethod',
+    validate: new AsyncSimpleSchema({}).validator(),
+    run() { return 'result'; },
+  });
+  const noArgsMethod = new ValidatedMethod({
+    name: 'asyncSchema.noArgsMethod',
+    validate: new AsyncSimpleSchema({}).validator(),
+    run() { return 'result'; },
+  });
+  const methodWithArgs = new ValidatedMethod({
+    name: 'asyncSchema.methodWithArgs',
+    validate: new AsyncSimpleSchema({
+      int: { type: Number },
+      string: { type: String },
+    }).validator(),
+    run() { return 'result'; },
+  });
+  const methodWithSchemaMixin = new ValidatedMethod({
+    name: 'asyncSchema.methodWithSchemaMixin',
+    mixins: [schemaMixin],
+    schema: new AsyncSimpleSchema({
+      int: { type: Number },
+      string: { type: String },
+    }),
+    run() { return 'result'; },
+  });
+  const methodThrowsImmediately = new ValidatedMethod({
+    name: 'asyncSchema.methodThrowsImmediately',
+    validate: new AsyncSimpleSchema({}).validator(),
+    run() { throw new Meteor.Error('async-schema-run-error'); },
+  });
+  const methodReturnsName = new ValidatedMethod({
+    name: 'asyncSchema.methodReturnsName',
+    validate: new AsyncSimpleSchema({}).validator(),
+    run() { return this.name; },
+  });
+  let resultReceived = false;
+  const methodWithApplyOptions = new ValidatedMethod({
+    name: 'asyncSchema.methodWithApplyOptions',
+    validate: new AsyncSimpleSchema({}).validator(),
+    applyOptions: {
+      onResultReceived() { resultReceived = true; },
+    },
+    run() { return 'result'; },
+  });
+  const asyncMethod = new ValidatedMethod({
+    name: 'asyncSchema.asyncMethod',
+    validate: new AsyncSimpleSchema({ param: { type: Number } }).validator(),
+    async run({ param }) {
+      await Promise.resolve();
+      return ['result', 'result2', param].join(',');
+    },
+  });
+
+  function callWithCallback(method, args) {
+    return new Promise((resolve, reject) => {
+      method.call(args, (error, result) => {
+        if (error) return reject(error);
+        resolve(result);
+      });
+    });
+  }
+
+  async function expectRejection(invoke, checkError) {
+    let error;
+    try {
+      await invoke();
+    } catch (caught) {
+      error = caught;
+    }
+    assert.exists(error, 'Expected the method to reject');
+    checkError(error);
+  }
+
+  it('defines a method callable through its callback and Meteor.call', async () => {
+    assert.equal(await callWithCallback(plainMethod, {}), 'result');
+    const result = await new Promise((resolve, reject) => {
+      Meteor.call(plainMethod.name, {}, (error, value) => {
+        if (error) return reject(error);
+        resolve(value);
+      });
+    });
+    assert.equal(result, 'result');
+  });
+
+  it('allows callback-only calls with an empty schema', async () => {
+    const result = await new Promise((resolve, reject) => {
+      noArgsMethod.call((error, value) => {
+        if (error) return reject(error);
+        resolve(value);
+      });
+    });
+    assert.equal(result, 'result');
+  });
+
+  it('allows callAsync with a synchronous run function', async () => {
+    assert.equal(await plainMethod.callAsync({}), 'result');
+  });
+
+  it('allows callAsync with an asynchronous run function', async () => {
+    assert.equal(await asyncMethod.callAsync({ param: 3000 }), 'result,result2,3000');
+  });
+
+  for (const method of [methodWithArgs, methodWithSchemaMixin]) {
+    for (const [label, invoke] of [
+      ['callback', args => callWithCallback(method, args)],
+      ['callAsync', args => method.callAsync(args)],
+      ['_execute', args => method._execute({}, args)],
+    ]) {
+      it('accepts valid arguments through ' + label + ': ' + method.name, async () => {
+        assert.equal(await invoke({ int: 5, string: 'what' }), 'result');
+      });
+
+      it('rejects invalid arguments through ' + label + ': ' + method.name, async () => {
+        await expectRejection(() => invoke({}), error => {
+          assert.lengthOf(error.details, 2);
+          assert.sameMembers(error.details.map(detail => detail.name), ['int', 'string']);
+        });
+      });
+    }
+  }
+
+  for (const [label, invoke] of [
+    ['callback', () => callWithCallback(methodThrowsImmediately, {})],
+    ['callAsync', () => methodThrowsImmediately.callAsync({})],
+    ['_execute', () => methodThrowsImmediately._execute({}, {})],
+  ]) {
+    it('propagates run errors after validation through ' + label, async () => {
+      await expectRejection(invoke, error => {
+        assert.instanceOf(error, Meteor.Error);
+        assert.equal(error.error, 'async-schema-run-error');
+      });
+    });
+  }
+
+  it('has access to this.name during direct execution and callback calls', async () => {
+    assert.equal(await methodReturnsName._execute({}, {}), methodReturnsName.name);
+    assert.equal(await callWithCallback(methodReturnsName, {}), methodReturnsName.name);
+  });
+
+  if (Meteor.isClient) {
+    it('accepts Meteor.apply options', async () => {
+      resultReceived = false;
+      assert.equal(await callWithCallback(methodWithApplyOptions, {}), 'result');
+      assert.isTrue(resultReceived);
+    });
+  }
+
+  it('awaits validation before running and preserves invocation context', async () => {
+    const args = { int: 5 };
+    const context = { userId: 'user' };
+    const calls = [];
+    const schema = new AsyncSimpleSchema({ int: { type: Number } });
+    const registrations = [];
+    const method = new ValidatedMethod({
+      name: 'asyncSchema.contextAndOrder',
+      connection: { methods(methods) { registrations.push(methods); } },
+      async validate(received) {
+        assert.strictEqual(this, context);
+        assert.strictEqual(received, args);
+        await schema.validate(received);
+        calls.push('validated');
+      },
+      run(received) {
+        assert.strictEqual(this, context);
+        assert.strictEqual(received, args);
+        assert.equal(this.name, 'asyncSchema.contextAndOrder');
+        assert.equal(this.userId, 'user');
+        assert.deepEqual(calls, ['validated']);
+        calls.push('run');
+        return 'result';
+      },
+    });
+    assert.lengthOf(registrations, 1);
+    assert.equal(await registrations[0][method.name].call(context, args), 'result');
+    assert.deepEqual(calls, ['validated', 'run']);
+  });
+
+  it('preserves the schema rejection and never runs on invalid arguments', async () => {
+    const schema = new AsyncSimpleSchema({ int: { type: Number } });
+    let validationError;
+    let runs = 0;
+    const method = new ValidatedMethod({
+      name: 'asyncSchema.validationRejection',
+      connection: { methods() {} },
+      async validate(args) {
+        try {
+          await schema.validate(args);
+        } catch (error) {
+          validationError = error;
+          throw error;
+        }
+      },
+      run() { runs++; },
+    });
+    await expectRejection(() => method._execute({}, {}), error => {
+      assert.strictEqual(error, validationError);
+      assert.lengthOf(error.details, 1);
+      assert.equal(error.details[0].name, 'int');
+    });
+    assert.equal(runs, 0);
+  });
+});

@@ -117,46 +117,58 @@ describe('mdg:method', () => {
     });
   });
 
-  it('allows methods to be called asynchronously', (done) => {
-    asyncMethod.callAsync({ param: 3000 })
-		.then(result => {
-		  assert.equal(result, 'result,result2,3000');
-		  done();
-		});
+  it('allows methods to be called asynchronously', async () => {
+    const result = await asyncMethod.callAsync({ param: 3000 });
+    assert.equal(result, 'result,result2,3000');
   });
 
 
   [methodWithArgs, methodWithSchemaMixin].forEach((method) => {
-    it('checks schema ' + method.name, (done) => {
-      method.call({}, (error, result) => {
-        // 2 invalid fields
-        assert.equal(error.errors.length, 2);
+    it('checks schema ' + method.name, async () => {
+      const error = await new Promise(resolve => {
+        method.call({}, error => resolve(error));
+      });
+      // 2 invalid fields
+      assert.equal(error.details.length, 2);
 
+      const result = await new Promise((resolve, reject) => {
         method.call({
           int: 5,
           string: "what",
         }, (error, result) => {
-          // All good!
-          assert.equal(result, 'result');
-
-          done();
+          if (error) return reject(error);
+          resolve(result);
         });
       });
+      // All good!
+      assert.equal(result, 'result');
     });
   });
 
-  it('throws error if no callback passed', (done) => {
-    methodThrowsImmediately.call({}, (err) => {
-      // If you pass a callback, you get the error in the callback
-      assert.ok(err);
+  it('passes errors to callbacks', async () => {
+    const error = await new Promise(resolve => {
+      methodThrowsImmediately.call({}, error => resolve(error));
+    });
+    assert.instanceOf(error, Meteor.Error);
+    assert.equal(error.error, 'error');
+  });
 
-      // If no callback, the error is thrown
+  it('propagates errors if no callback is passed', async () => {
+    if (Meteor.isServer) {
+      // Meteor 3 server calls reject their returned promise.
+      await methodThrowsImmediately.call({}).then(
+        () => assert.fail('Expected the method call to reject'),
+        error => {
+          assert.instanceOf(error, Meteor.Error);
+          assert.equal(error.error, 'error');
+        }
+      );
+    } else {
+      // Client stub errors still throw synchronously.
       assert.throws(() => {
         methodThrowsImmediately.call({});
       }, /error/);
-
-      done();
-    });
+    }
   });
 
   it('throws error if a mixin does not return the options object', () => {

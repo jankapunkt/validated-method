@@ -1,7 +1,7 @@
 import { Meteor } from 'meteor/meteor';
 import { ValidatedMethod } from 'meteor/mdg:validated-method';
-import { SimpleSchema } from 'meteor/aldeed:simple-schema';
-import { assert } from 'meteor/practicalmeteor:chai';
+import SimpleSchema from 'simpl-schema';
+import { assert } from 'chai';
 
 const plainMethod = new ValidatedMethod({
   name: 'plainMethod',

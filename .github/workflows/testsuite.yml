@@ -1,0 +1,30 @@
+name: Test suite
+
+on: [push, pull_request]
+
+jobs:
+  tests:
+    name: tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        meteor: ['1.7', '2.3', '2.16', '3.0.4', '3.5.1' ]
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: Setup meteor
+        uses: meteorengineer/setup-meteor@v2
+        with:
+          meteor-release: ${{ matrix.meteor }}
+
+      - name: cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+      - run: |
+          meteor npm ci
+          meteor npm run test:ci

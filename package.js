@@ -6,7 +6,7 @@ Package.describe({
 });
 
 Package.onUse(function (api) {
-  api.versionsFrom(['1.7', '2.3', '3.0']);
+  api.versionsFrom(['2.3', '3.0']);
 
   api.use([
     'ecmascript',

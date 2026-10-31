@@ -26,5 +26,5 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-node-
       - run: |
-          meteor npm ci
+          meteor npm install
           meteor npm run test:ci

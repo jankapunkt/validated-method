@@ -11,7 +11,7 @@ jobs:
         meteor: ['2.3', '2.16', '3.0.4', '3.5.4' ]
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup meteor
         uses: meteorengineer/setup-meteor@v2
@@ -26,5 +26,5 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-node-
       - run: |
-          meteor npm ci
+          meteor npm install
           meteor npm run test:ci

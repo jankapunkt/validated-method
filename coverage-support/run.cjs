@@ -1,6 +1,6 @@
-const fs = require('node:fs');
-const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const fs = require('fs');
+const path = require('path');
+const { spawnSync } = require('child_process');
 const { createInstrumenter } = require('istanbul-lib-instrument');
 const { createCoverageMap } = require('istanbul-lib-coverage');
 const { createContext } = require('istanbul-lib-report');
@@ -24,11 +24,32 @@ const instrumenter = createInstrumenter({
 fs.writeFileSync(path.join(generated, 'validated-method.js'),
   instrumenter.instrumentSync(fs.readFileSync(source, 'utf8'), source));
 
+// test-packages bundles a separate test app and Npm.require ignores NODE_PATH,
+// so the browser driver must be an npm dependency of that app. Meteor runs
+// `npm install` there when the app already has a package.json.
+// puppeteer 19 is the newest line that still runs on Meteor 2.x (Node 14).
+const testApp = path.join(root, '.test-app');
+fs.mkdirSync(testApp, { recursive: true });
+fs.writeFileSync(path.join(testApp, 'package.json'), `${JSON.stringify({
+  private: true,
+  dependencies: {
+    '@babel/runtime': '^7.23.5',
+    '@swc/helpers': '^0.5.17',
+    'jquery': '^3.7.1',
+    'meteor-node-stubs': '^1.2.5',
+    'puppeteer': '19.11.1',
+  },
+}, null, 2)}\n`);
+
 try {
   const result = spawnSync('meteor',
-    ['test-packages', '--once', '--driver-package', 'meteortesting:mocha', './'], {
+    ['test-packages', '--once', '--driver-package', 'meteortesting:mocha',
+      '--test-app-path', testApp, './'], {
       cwd: root,
       stdio: 'inherit',
+      // a driver that fails after the server suite leaves `--once` running forever
+      timeout: 10 * 60 * 1000,
+      killSignal: 'SIGKILL',
       env: { ...process.env, VALIDATED_METHOD_COVERAGE: raw },
     });
   if (result.error) throw result.error;

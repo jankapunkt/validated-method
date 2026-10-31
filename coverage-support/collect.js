@@ -27,6 +27,11 @@ if (Meteor.isServer) {
 } else {
   after(async function () {
     this.timeout(10000);
-    await Meteor.callAsync(methodName, globalThis.__validatedMethodCoverage__);
+    const coverage = globalThis.__validatedMethodCoverage__;
+    // Meteor.callAsync only exists since Meteor 2.8
+    await (Meteor.callAsync
+      ? Meteor.callAsync(methodName, coverage)
+      : new Promise((resolve, reject) => Meteor.call(methodName, coverage,
+        (error, result) => (error ? reject(error) : resolve(result)))));
   });
 }

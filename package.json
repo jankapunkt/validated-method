@@ -7,12 +7,11 @@
     "test:ci": "TEST_BROWSER_DRIVER=puppeteer npm run test:coverage"
   },
   "devDependencies": {
-    "chai": "^6.3.0",
+    "chai": "^4.5.0",
     "istanbul-lib-coverage": "3.2.2",
     "istanbul-lib-instrument": "6.0.3",
     "istanbul-lib-report": "3.0.1",
     "istanbul-reports": "3.2.0",
-    "puppeteer": "^25.14.0",
     "simpl-schema": "^1.13.1"
   }
 }

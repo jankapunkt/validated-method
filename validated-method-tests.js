@@ -502,7 +502,7 @@ if (Meteor.isServer) {
       });
     }
 
-    for (const rejects of [false, true]) {
+    for (const rejects of supportsAsyncMethods ? [false, true] : []) {
       it('forwards server callAsync and preserves its ' + (rejects ? 'rejected' : 'resolved') + ' promise', async () => {
         const f = fixture({ applyOptions: { wait: true } });
         const args = { value: 1 };

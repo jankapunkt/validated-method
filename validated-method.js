@@ -1,5 +1,9 @@
 import { check, Match } from 'meteor/check';
 
+const supportsAsyncMethods =
+    typeof Meteor.callAsync === 'function' &&
+    typeof Meteor.applyAsync === 'function';
+
 export class ValidatedMethod {
   constructor(options) {
     // Default to no mixins
@@ -86,6 +90,9 @@ export class ValidatedMethod {
   }
 
   callAsync(args) {
+    if (!supportsAsyncMethods) {
+      throw new Error('Async methods are not supported in this version of Meteor');
+    }
 		//taken from the callAsync method internals which will use applyAsync with a isFromCallAsync param
 		//which will flag methods as running on DDP
 		//reset current method invocation and mark it as running

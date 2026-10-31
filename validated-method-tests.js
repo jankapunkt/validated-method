@@ -191,8 +191,9 @@ describe('mdg:method', () => {
 
   it('propagates errors if no callback is passed', async () => {
     if (Meteor.isServer) {
-      // Meteor 3 server calls reject their returned promise.
-      await methodThrowsImmediately.call({}).then(
+      // Meteor 3 server calls reject their returned promise, while
+      // Fibers-based 2.x server calls throw synchronously.
+      await (async () => methodThrowsImmediately.call({}))().then(
         () => assert.fail('Expected the method call to reject'),
         error => {
           assert.instanceOf(error, Meteor.Error);

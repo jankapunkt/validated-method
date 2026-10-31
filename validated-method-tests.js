@@ -158,6 +158,21 @@ describe('mdg:method', () => {
     });
   }
 
+  it('rejects callAsync when the Meteor release has no async methods', () => {
+    // 2.x < 2.8 lacks these already; on newer releases remove them temporarily
+    const { callAsync, applyAsync } = Meteor;
+    Meteor.callAsync = undefined;
+    Meteor.applyAsync = undefined;
+    try {
+      assert.throws(() => {
+        asyncMethodNoTimeout.callAsync({ param: 1 });
+      }, 'Async methods are not supported in this version of Meteor');
+    } finally {
+      Meteor.callAsync = callAsync;
+      Meteor.applyAsync = applyAsync;
+    }
+  });
+
 
   [methodWithArgs, methodWithSchemaMixin].forEach((method) => {
     it('checks schema ' + method.name, async () => {

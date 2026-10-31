@@ -1,6 +1,7 @@
 import { check, Match } from 'meteor/check';
 
-const supportsAsyncMethods =
+// checked per call, so environments without async methods can be simulated in tests
+const supportsAsyncMethods = () =>
     typeof Meteor.callAsync === 'function' &&
     typeof Meteor.applyAsync === 'function';
 
@@ -90,7 +91,7 @@ export class ValidatedMethod {
   }
 
   callAsync(args) {
-    if (!supportsAsyncMethods) {
+    if (!supportsAsyncMethods()) {
       throw new Error('Async methods are not supported in this version of Meteor');
     }
 		//taken from the callAsync method internals which will use applyAsync with a isFromCallAsync param

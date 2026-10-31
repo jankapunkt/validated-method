@@ -4,6 +4,11 @@ import SimpleSchema from 'simpl-schema';
 import AsyncSimpleSchema from 'meteor/aldeed:simple-schema';
 import { assert } from 'chai';
 
+// 2.x releases < 2.8 do not support async methods
+const supportsAsyncMethods =
+    typeof Meteor.callAsync === 'function' &&
+    typeof Meteor.applyAsync === 'function';
+
 const plainMethod = new ValidatedMethod({
   name: 'plainMethod',
   validate: new SimpleSchema({}).validator(),
@@ -90,6 +95,23 @@ const asyncMethod = new ValidatedMethod({
   }
 });
 
+// setTimeout cannot be used in async method stubs so
+// we create one that uses no timeout
+const asyncMethodNoTimeout = new ValidatedMethod({
+  name: 'asyncMethodNoTimeout',
+  validate: new SimpleSchema({
+    param: { type: Number },
+  }).validator(),
+  async run({ param }) {
+    return new Promise(resolve => {
+      resolve(['result', 'result2', param]);
+    })
+        .then(result => {
+          return result.join(',');
+        });
+  }
+});
+
 const assertThrows = async ({ fn, message }) => {
   try {
     await fn();
@@ -129,10 +151,12 @@ describe('mdg:method', () => {
     });
   });
 
-  it('allows methods to be called asynchronously', async () => {
-    const result = await asyncMethod.callAsync({ param: 3000 });
-    assert.equal(result, 'result,result2,3000');
-  });
+  if (supportsAsyncMethods) {
+    it('allows methods to be called asynchronously', async () => {
+      const result = await asyncMethodNoTimeout.callAsync({ param: 3000 });
+      assert.equal(result, 'result,result2,3000');
+    });
+  }
 
 
   [methodWithArgs, methodWithSchemaMixin].forEach((method) => {
@@ -491,15 +515,17 @@ if (Meteor.isServer) {
       async run() { throw new Meteor.Error('server-contract-rejection'); },
     });
 
-    it('propagates a real server async run rejection', async () => {
-      await rejectingMethod.callAsync({}).then(
-        () => assert.fail('Expected rejection'),
-        error => {
-          assert.instanceOf(error, Meteor.Error);
-          assert.equal(error.error, 'server-contract-rejection');
-        }
-      );
-    });
+    if (supportsAsyncMethods) {
+      it('propagates a real server async run rejection', async () => {
+        await rejectingMethod.callAsync({}).then(
+          () => assert.fail('Expected rejection'),
+          error => {
+            assert.instanceOf(error, Meteor.Error);
+            assert.equal(error.error, 'server-contract-rejection');
+          }
+        );
+      });
+    }
   });
 }
 
@@ -602,13 +628,15 @@ describe('mdg:method with AsyncSimpleSchema', () => {
     assert.equal(result, 'result');
   });
 
-  it('allows callAsync with a synchronous run function', async () => {
-    assert.equal(await plainMethod.callAsync({}), 'result');
-  });
+  if (supportsAsyncMethods) {
+    it('allows callAsync with a synchronous run function', async () => {
+      assert.equal(await plainMethod.callAsync({}), 'result');
+    });
 
-  it('allows callAsync with an asynchronous run function', async () => {
-    assert.equal(await asyncMethod.callAsync({ param: 3000 }), 'result,result2,3000');
-  });
+    it('allows callAsync with an asynchronous run function', async () => {
+      assert.equal(await asyncMethod.callAsync({ param: 3000 }), 'result,result2,3000');
+    });
+  }
 
   for (const method of [methodWithArgs, methodWithSchemaMixin]) {
     for (const [label, invoke] of [
@@ -616,6 +644,8 @@ describe('mdg:method with AsyncSimpleSchema', () => {
       ['callAsync', args => method.callAsync(args)],
       ['_execute', args => method._execute({}, args)],
     ]) {
+      if (label === 'callAsync' && !supportsAsyncMethods) continue;
+
       it('accepts valid arguments through ' + label + ': ' + method.name, async () => {
         assert.equal(await invoke({ int: 5, string: 'what' }), 'result');
       });
@@ -634,6 +664,8 @@ describe('mdg:method with AsyncSimpleSchema', () => {
     ['callAsync', () => methodThrowsImmediately.callAsync({})],
     ['_execute', () => methodThrowsImmediately._execute({}, {})],
   ]) {
+    if (label === 'callAsync' && !supportsAsyncMethods) continue;
+
     it('propagates run errors after validation through ' + label, async () => {
       await expectRejection(invoke, error => {
         assert.instanceOf(error, Meteor.Error);
@@ -824,7 +856,7 @@ describe('ValidatedMethod async validation contracts', () => {
   });
 });
 
-if (Meteor.isClient) {
+if (Meteor.isClient && supportsAsyncMethods) {
   describe('ValidatedMethod client callAsync contracts', () => {
     let previousInvocation;
     let previousRunning;

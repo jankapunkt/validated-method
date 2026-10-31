@@ -525,6 +525,24 @@ if (Meteor.isServer) {
       });
     }
 
+    if (!supportsAsyncMethods) {
+      it('throws synchronously from server callAsync without forwarding when async methods are unsupported', () => {
+        const f = fixture();
+        let forwarded = false;
+        f.connection.applyAsync = function () {
+          forwarded = true;
+          return Promise.resolve();
+        };
+        const method = new ValidatedMethod(f.options);
+        let returned;
+        assert.throws(() => {
+          returned = method.callAsync({ value: 1 });
+        }, Error, 'Async methods are not supported in this version of Meteor');
+        assert.isUndefined(returned);
+        assert.isFalse(forwarded);
+      });
+    }
+
     const rejectingMethod = new ValidatedMethod({
       name: 'validatedMethod.serverContracts.asyncRejection',
       validate: null,

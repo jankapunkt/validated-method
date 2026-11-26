@@ -25,7 +25,7 @@ This is a simple wrapper package for `Meteor.methods`. The need for such a packa
 when the Meteor Guide was being written and we realized there was a lot of best-practices
 boilerplate around methods that could be easily abstracted away.
 
-> Note: the code samples in this README use the Meteor 1.3 import/export syntax, but this package works great in Meteor 1.2 as well. In that case, we recommend attaching your ValidatedMethod objects to the relevant collection, like `Lists.methods.insert = new ValidatedMethod(...)`.
+> Note: this package requires Meteor 2.3 or newer. `callAsync` requires Meteor 2.8 or newer.
 
 ### Benefits of ValidatedMethod
 
@@ -98,6 +98,7 @@ export const makePrivate = new ValidatedMethod({
 ```
 
 The `validator` function called in the example requires SimpleSchema version 1.4+.
+With SimpleSchema 3 the validator is async; see [Async validation](#async-validation).
 
 Be aware that by default the `validator` function does not [clean](https://github.com/aldeed/meteor-simple-schema#cleaning-data)
 the method parameters before checking them. This behavior differs from that of
@@ -162,6 +163,39 @@ const method = new ValidatedMethod({
 });
 ```
 
+#### Async validation
+
+`validate` may return a promise, for example when it is an `async` function or a
+SimpleSchema 3 validator (`aldeed:simple-schema@3` or `simpl-schema@3`, whose
+`validator()` is async). `run` is only called once the promise resolves, and a
+rejection reaches the caller like any other validation error.
+
+```js
+const method = new ValidatedMethod({
+  name: 'methodName',
+  // SimpleSchema 3: the validator returns a promise
+  validate: new SimpleSchema({ listId: { type: String } }).validator(),
+  run({ listId }) {
+    // ...
+  },
+});
+
+await method.callAsync({ listId });
+```
+
+Prefer `callAsync` for such methods. On the client, Meteor cannot wait for an async
+simulation started by `call`, so `call` detects async validation on its first use and
+from then on routes the method through `callAsync`. This keeps
+[throwStubExceptions](#validation-and-throwstubexceptions) working: invalid arguments
+are rejected on the client without calling the server. The callback still receives
+the error or the server result. Without a callback, `call` returns a promise instead
+of the simulation's return value. The first call runs the client-side validation twice.
+
+This needs Meteor 2.8 or newer and `throwStubExceptions` enabled, which is the
+default. Otherwise, and when the method is invoked through `Meteor.call` directly,
+Meteor's default behavior applies: the server validates the arguments, and Meteor
+logs a warning about the async simulation.
+
 #### Skipping argument validation
 
 If your method does not need argument validation, perhaps because it does not take any arguments, you can use `validate: null` to skip argument validation.
@@ -219,7 +253,20 @@ makePrivate.call({
 ```
 
 The return value of the server-side method is available as the second argument of the method
-callback.
+callback. For methods with async validation, see [Async validation](#async-validation).
+
+#### method#callAsync(args: Object)
+
+Returns a promise for the return value of the server-side method:
+
+```js
+const result = await makePrivate.callAsync({
+  listId: list._id
+});
+```
+
+On the client, errors thrown by the simulation reject the promise and the server is not
+called. `callAsync` requires Meteor 2.8 or newer; on older releases the promise rejects.
 
 #### method#\_execute(context: Object, args: Object)
 
@@ -359,20 +406,23 @@ npm ci
 npm run test:coverage
 ```
 
-The runner instruments a temporary copy of `validated-method.js` before Meteor
-compiles it, then runs
+The runner temporarily replaces `validated-method.js` with an instrumented
+version, then runs
 `meteor test-packages --once --driver-package meteortesting:mocha ./`.
-Only coverage runs select this copy; ordinary package consumers use the original
-source. Test-only Mocha hooks save counters in `.nyc_output/`. The runner merges
+The original is kept in `.coverage-backup/` and restored afterwards, also after
+a failure or Ctrl+C; if a run is killed outright, the next run restores it first.
+`package.js` always uses the original source. Test-only Mocha hooks save counters in `.nyc_output/`. The runner merges
 the counters and writes `coverage/index.html`, `coverage/lcov.info`, and
 `coverage/coverage-final.json`, with locations referring to the original source.
-It preserves a failing test command's exit status and removes the generated source.
+It preserves a failing test command's exit status.
 Run only one coverage process at a time in this checkout.
 
 For browser coverage, configure the test driver's browser support (for example,
 `TEST_BROWSER_DRIVER=puppeteer npm run test:coverage` with Puppeteer available to
 the driver). The client hook awaits transfer of its counters to the test server
 before finishing. Without a browser, the runner explicitly reports server-only
-coverage; client branches remain uncovered. Reports are also generated after
+coverage; client branches remain uncovered. With `TEST_BROWSER_DRIVER` set,
+missing browser coverage fails the run, and a run that does not finish within
+10 minutes is killed. Reports are also generated after
 test failures if the hooks collected counters. Startup failures produce an error
 instead of an empty coverage report.

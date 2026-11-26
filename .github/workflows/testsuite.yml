@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        meteor: ['2.3', '2.16', '3.0.4', '3.5.4' ]
+        meteor: ['2.3', '2.16', '3.0.4', '3.5.4', '3.6.1']
     steps:
       - name: checkout
         uses: actions/checkout@v7
@@ -26,5 +26,5 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-node-
       - run: |
-          meteor npm install
+          meteor npm ci
           meteor npm run test:ci

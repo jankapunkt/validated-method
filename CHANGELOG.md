@@ -1,5 +1,19 @@
 # Change log
 
+## 2.0.0
+
+- **Breaking:** requires Meteor 2.3 or newer; Meteor 1.x is no longer supported.
+- `validate` may return a promise, so async validators such as SimpleSchema 3's
+  `validator()` are supported. `run` waits for validation to finish.
+  [PR #96](https://github.com/meteor/validated-method/pull/96)
+- On the client, `call` routes methods with async validation through `callAsync`,
+  so validation errors still stop the server call. Without a callback, `call`
+  then returns a promise.
+- `callAsync` rejects instead of throwing when async methods are unavailable
+  (Meteor older than 2.8, or a connection without `applyAsync`).
+- The test suite runs on `meteortesting:mocha` with coverage, and CI covers
+  Meteor 2.3 to 3.6.
+
 ## 1.3.0
 
 - Added `callAsync` as the counter part for `Meteor.callAsync` 
